@@ -1,0 +1,43 @@
+//@version=6 
+strategy("HMA + SMA Filtered Crossover Strategy", overlay=true,
+     initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+pivot=(high+low+close)
+src = pivot*2 - high
+hma_len   = input.int(20, "HMA Length", minval=1)
+sma_len   = input.int(50, "SMA Length", minval=1)
+
+atr_len   = input.int(25, "ATR Length")
+atr_mult  = input.float(3.0, "ATR Stop Mult")
+atr_tp    = input.float(6.0, "ATR Take Profit Mult")
+
+// Calculations
+hma = ta.hma(high, hma_len)
+sma = ta.sma(high, sma_len)
+
+// ATR
+atr = ta.atr(atr_len)
+
+// Entry Conditions
+longCond  = ta.crossover(hma, sma) 
+shortCond = ta.crossunder(hma, sma) 
+
+// Trade Execution
+if (longCond and strategy.position_size == 0)
+    stop_price = low - atr_mult * atr
+    tp_price   = high + atr_tp * atr
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", from_entry="Long", stop=stop_price, limit=tp_price)
+
+if (shortCond and strategy.position_size == 0)
+    stop_price = high + atr_mult * atr
+    tp_price   = low - atr_tp * atr
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", from_entry="Short", stop=stop_price, limit=tp_price)
+
+// Plots
+plot(hma, "HMA", color=color.green)
+plot(sma, "SMA", color=color.orange, linewidth=2)
+plotshape(longCond, title="Long Signal", style=shape.triangleup, color=color.green, location=location.belowbar, size=size.small)
+plotshape(shortCond, title="Short Signal", style=shape.triangledown, color=color.red, location=location.abovebar, size=size.small)
