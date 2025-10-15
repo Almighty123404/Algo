@@ -1,0 +1,97 @@
+//@version=6
+strategy("KAMA + CMF + RSI + ATR Stops (v6, reliable)", overlay=true,
+     initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// ========== INPUTS ==========
+kama_fast_len = input.int(25, "KAMA Fast Length")
+kama_slow_len = input.int(200, "KAMA Slow Length")
+kama_fast_sc_len = input.int(5, "KAMA Fast SC Length")
+kama_slow_sc_len = input.int(30, "KAMA Slow SC Length")
+
+cmf_len = input.int(20, "CMF Length")
+cmf_threshold = input.float(0.05, "CMF Threshold")
+
+rsi_len = input.int(14, "RSI Length")
+rsi_filter = input.int(50, "RSI Filter Level")
+
+atr_len = input.int(14, "ATR Length")
+stop_mult = input.float(3.0, "ATR Stop Multiplier")
+tp_mult = input.float(4.0, "ATR Take-Profit Multiplier")
+
+trail_offset_mult = input.float(2.0, "Trailing Offset (xATR)")
+min_hold_bars = input.int(6, "Minimum Bars to Hold")
+min_atr_perc = input.float(0.15, "Minimum ATR % of Price")
+
+// ========== KAMA IMPLEMENTATION (no sum) ==========
+kama_func(src, n, fastlen, slowlen) =>
+    change = math.abs(src - src[n])
+    // volatility = sum(abs(src - src[1]), n)
+    // replace sum by average * n: ta.sma(abs(src - src[1]), n) * n
+    volatility = ta.sma(math.abs(src - src[1]), n) * n
+    er = (volatility == 0.0) ? 0.0 : change / volatility
+    fastest = 2.0 / (fastlen + 1.0)
+    slowest = 2.0 / (slowlen + 1.0)
+    sc = math.pow(er * (fastest - slowest) + slowest, 2.0)
+    var float _kama = na
+    if na(_kama)
+        _kama := src
+    _kama := nz(_kama[1]) + sc * (src - nz(_kama[1]))
+    _kama
+
+kama_fast = kama_func(close, kama_fast_len, kama_fast_sc_len, kama_slow_sc_len)
+kama_slow = kama_func(close, kama_slow_len, kama_fast_sc_len, kama_slow_sc_len)
+
+// ========== CMF using TA SMA (avoids ta.sum) ==========
+mf_mult = ((close - low) - (high - close)) / math.max(high - low, 0.0000001)
+mf_vol = mf_mult * volume
+cmf = ta.sma(mf_vol, cmf_len) / ta.sma(volume, cmf_len)
+
+// ========== RSI, ATR ==========
+rsi = ta.rsi(close, rsi_len)
+atr = ta.atr(atr_len)
+atr_perc = atr / close * 100.0
+
+// ========== ENTRY CONDITIONS ==========
+longCond = ta.crossover(kama_fast, kama_slow) and rsi > rsi_filter and atr_perc >= min_atr_perc
+shortCond = ta.crossunder(kama_fast, kama_slow) and rsi < rsi_filter and atr_perc >= min_atr_perc
+
+// ========== TRADE EXECUTION ==========
+var int entry_bar = na
+var float entry_price = na
+
+if (longCond and strategy.position_size == 0)
+    entry_bar := bar_index
+    entry_price := close
+    strategy.entry("Long", strategy.long)
+
+if (shortCond and strategy.position_size == 0)
+    entry_bar := bar_index
+    entry_price := close
+    strategy.entry("Short", strategy.short)
+
+// ========== EXIT CONDITIONS ==========
+can_exit = (bar_index >= nz(entry_bar) + min_hold_bars)
+
+if (strategy.position_size > 0)
+    stop_price = nz(entry_price) - stop_mult * atr
+    tp_price = nz(entry_price) + tp_mult * atr
+    if can_exit
+        strategy.exit("Long Exit", from_entry="Long", stop=stop_price, limit=tp_price, trail_offset=trail_offset_mult * atr)
+    else
+        strategy.exit("Long Exit", from_entry="Long", stop=stop_price)
+
+if (strategy.position_size < 0)
+    stop_price = nz(entry_price) + stop_mult * atr
+    tp_price = nz(entry_price) - tp_mult * atr
+    if can_exit
+        strategy.exit("Short Exit", from_entry="Short", stop=stop_price, limit=tp_price, trail_offset=trail_offset_mult * atr)
+    else
+        strategy.exit("Short Exit", from_entry="Short", stop=stop_price)
+
+// ========== PLOTS ==========
+plot(kama_fast, color=color.yellow, title="KAMA Fast")
+plot(kama_slow, color=color.blue, title="KAMA Slow")
+plot(cmf, color=color.new(color.green, 0), title="CMF", style=plot.style_area)
+hline(0, color=color.gray)
+plotshape(longCond, location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, title="Buy Signal")
+plotshape(shortCond, location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, title="Sell Signal")
